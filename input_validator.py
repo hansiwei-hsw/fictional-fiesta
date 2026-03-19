@@ -2,167 +2,323 @@
 input_validator.py - 输入校验模块
 
 该模块负责：
-- 验证数字输入的合法性
-- 验证运算符的合法性
-- 格式化用户输入
-- 提供友好的错误提示
+- 验证翻译文本合法性
+- 语种选择验证
+- 批量输入格式验证
+- 特殊字符处理
 
 遵循PEP8规范，所有函数均添加文档字符串。
 """
 
 import re
-from typing import Union, Tuple, Optional, List
+from typing import Tuple, Optional, List
+
+
+class ValidationError(Exception):
+    """验证错误异常"""
+    pass
 
 
 class InputValidator:
     """
     输入校验器类
     
-    提供各种输入验证和格式化功能。
+    提供各种输入验证功能。
     """
     
-    VALID_OPERATORS = {
-        '+', '-', '*', '/', '%', '^',
-        'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
-        'ln', 'log', 'log10',
-        'sqrt', 'root',
-        'fact', 'factorial',
-        'abs', 'exp', 'floor', 'ceil', 'round',
-        'perm', 'comb'
+    MAX_TEXT_LENGTH = 5000
+    MIN_TEXT_LENGTH = 1
+    
+    VALID_LANGUAGES = {
+        'zh', 'en', 'auto',
+        '中文', '英文', '自动',
+        'chinese', 'english'
     }
     
-    NUMBER_PATTERN = re.compile(
-        r'^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$'
-    )
+    LANGUAGE_MAP = {
+        '中文': 'zh',
+        '英文': 'en',
+        '自动': 'auto',
+        'chinese': 'zh',
+        'english': 'en'
+    }
     
-    def __init__(self, decimal_separator: str = '.'):
+    DANGEROUS_PATTERNS = [
+        r'<script[^>]*>.*?</script>',
+        r'javascript:',
+        r'on\w+\s*=',
+    ]
+    
+    def __init__(self, max_length: int = 5000):
         """
         初始化输入校验器
         
         Args:
-            decimal_separator: 小数分隔符，默认为'.'
+            max_length: 最大文本长度
         """
-        self._decimal_separator = decimal_separator
+        self._max_length = max_length
     
-    def validate_number(self, value: str) -> Tuple[bool, Optional[float], str]:
+    def validate_text(self, text: str) -> Tuple[bool, str, str]:
         """
-        验证数字输入
+        验证翻译文本
         
         Args:
-            value: 用户输入的字符串
+            text: 待验证文本
             
         Returns:
-            (是否有效, 转换后的数值, 错误信息)
+            (是否有效, 处理后的文本, 错误信息)
         """
-        if value is None or value.strip() == '':
-            return False, None, "输入不能为空"
+        if text is None:
+            return False, "", "输入不能为空"
         
-        value = value.strip()
+        text = text.strip()
         
-        if self._decimal_separator != '.':
-            value = value.replace(self._decimal_separator, '.')
+        if not text:
+            return False, "", "输入不能为空"
         
-        if not self.NUMBER_PATTERN.match(value):
-            try:
-                num = float(value)
-                return True, num, ""
-            except ValueError:
-                return False, None, f"'{value}' 不是有效的数字格式"
+        if len(text) < self.MIN_TEXT_LENGTH:
+            return False, "", f"输入文本过短，最少需要 {self.MIN_TEXT_LENGTH} 个字符"
         
-        try:
-            num = float(value)
-            return True, num, ""
-        except ValueError:
-            return False, None, f"'{value}' 无法转换为数字"
+        if len(text) > self._max_length:
+            return False, "", f"输入文本过长，最多支持 {self._max_length} 个字符"
+        
+        sanitized = self._sanitize_text(text)
+        
+        return True, sanitized, ""
     
-    def validate_integer(self, value: str, min_val: Optional[int] = None, 
-                         max_val: Optional[int] = None) -> Tuple[bool, Optional[int], str]:
+    def _sanitize_text(self, text: str) -> str:
         """
-        验证整数输入
+        清理文本中的危险字符
         
         Args:
-            value: 用户输入的字符串
-            min_val: 最小值（可选）
-            max_val: 最大值（可选）
+            text: 原始文本
             
         Returns:
-            (是否有效, 转换后的整数, 错误信息)
+            清理后的文本
         """
-        is_valid, num, error = self.validate_number(value)
+        result = text
         
-        if not is_valid:
-            return False, None, error
+        for pattern in self.DANGEROUS_PATTERNS:
+            result = re.sub(pattern, '', result, flags=re.IGNORECASE | re.DOTALL)
         
-        if not float(num).is_integer():
-            return False, None, f"'{value}' 不是整数"
+        result = result.replace('\r\n', '\n').replace('\r', '\n')
         
-        int_val = int(num)
-        
-        if min_val is not None and int_val < min_val:
-            return False, None, f"输入值 {int_val} 小于最小值 {min_val}"
-        
-        if max_val is not None and int_val > max_val:
-            return False, None, f"输入值 {int_val} 大于最大值 {max_val}"
-        
-        return True, int_val, ""
+        return result
     
-    def validate_positive_number(self, value: str, 
-                                  allow_zero: bool = False) -> Tuple[bool, Optional[float], str]:
+    def validate_language(self, lang: str) -> Tuple[bool, str, str]:
         """
-        验证正数输入
+        验证语言选择
         
         Args:
-            value: 用户输入的字符串
-            allow_zero: 是否允许零
+            lang: 语言代码或名称
             
         Returns:
-            (是否有效, 转换后的数值, 错误信息)
+            (是否有效, 标准化的语言代码, 错误信息)
         """
-        is_valid, num, error = self.validate_number(value)
+        if lang is None or not lang.strip():
+            return True, 'auto', ""
         
-        if not is_valid:
-            return False, None, error
+        lang = lang.strip().lower()
         
-        if allow_zero:
-            if num < 0:
-                return False, None, f"输入值必须为非负数，当前: {num}"
-        else:
-            if num <= 0:
-                return False, None, f"输入值必须为正数，当前: {num}"
+        if lang in self.LANGUAGE_MAP:
+            return True, self.LANGUAGE_MAP[lang], ""
         
-        return True, num, ""
+        if lang in self.VALID_LANGUAGES:
+            return True, lang, ""
+        
+        return False, "", f"无效的语言选择: {lang}，支持的选项: {self.VALID_LANGUAGES}"
     
-    def validate_non_negative_number(self, value: str) -> Tuple[bool, Optional[float], str]:
+    def validate_source_target_lang(self, source_lang: str, 
+                                     target_lang: str) -> Tuple[bool, str]:
         """
-        验证非负数输入
+        验证源语言和目标语言组合
         
         Args:
-            value: 用户输入的字符串
-            
-        Returns:
-            (是否有效, 转换后的数值, 错误信息)
-        """
-        return self.validate_positive_number(value, allow_zero=True)
-    
-    def validate_operator(self, op: str) -> Tuple[bool, str]:
-        """
-        验证运算符
-        
-        Args:
-            op: 运算符字符串
+            source_lang: 源语言
+            target_lang: 目标语言
             
         Returns:
             (是否有效, 错误信息)
         """
-        if op is None or op.strip() == '':
-            return False, "运算符不能为空"
+        _, source_code, _ = self.validate_language(source_lang)
+        _, target_code, _ = self.validate_language(target_lang)
         
-        op = op.strip().lower()
+        if source_code != 'auto' and source_code == target_code:
+            return False, "源语言和目标语言不能相同"
         
-        if op in self.VALID_OPERATORS:
-            return True, ""
+        return True, ""
+    
+    def detect_text_type(self, text: str) -> str:
+        """
+        检测文本类型
         
-        return False, f"'{op}' 不是有效的运算符"
+        Args:
+            text: 文本
+            
+        Returns:
+            文本类型 ('word', 'sentence', 'paragraph')
+        """
+        text = text.strip()
+        
+        if '\n' in text:
+            return 'paragraph'
+        
+        if ' ' in text:
+            return 'sentence'
+        
+        return 'word'
+    
+    def is_chinese(self, text: str) -> bool:
+        """
+        判断文本是否为中文
+        
+        Args:
+            text: 文本
+            
+        Returns:
+            是否为中文
+        """
+        chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
+        chinese_chars = len(chinese_pattern.findall(text))
+        return chinese_chars > len(text) * 0.3
+    
+    def is_english(self, text: str) -> bool:
+        """
+        判断文本是否为英文
+        
+        Args:
+            text: 文本
+            
+        Returns:
+            是否为英文
+        """
+        english_pattern = re.compile(r'[a-zA-Z]')
+        english_chars = len(english_pattern.findall(text))
+        return english_chars > len(text) * 0.3
+    
+    def suggest_target_lang(self, text: str, source_lang: str = 'auto') -> str:
+        """
+        建议目标语言
+        
+        Args:
+            text: 文本
+            source_lang: 源语言
+            
+        Returns:
+            建议的目标语言
+        """
+        if source_lang == 'zh':
+            return 'en'
+        elif source_lang == 'en':
+            return 'zh'
+        
+        if self.is_chinese(text):
+            return 'en'
+        elif self.is_english(text):
+            return 'zh'
+        
+        return 'zh'
+    
+    def validate_batch_input(self, texts: List[str]) -> Tuple[bool, List[str], List[str]]:
+        """
+        验证批量输入
+        
+        Args:
+            texts: 文本列表
+            
+        Returns:
+            (是否全部有效, 有效的文本列表, 错误信息列表)
+        """
+        valid_texts = []
+        errors = []
+        
+        for i, text in enumerate(texts):
+            is_valid, processed_text, error = self.validate_text(text)
+            
+            if is_valid:
+                valid_texts.append(processed_text)
+            else:
+                errors.append(f"第 {i + 1} 项: {error}")
+        
+        return len(errors) == 0, valid_texts, errors
+    
+    def parse_file_input(self, file_content: str, 
+                         delimiter: str = '\n') -> Tuple[bool, List[str], str]:
+        """
+        解析文件输入
+        
+        Args:
+            file_content: 文件内容
+            delimiter: 分隔符
+            
+        Returns:
+            (是否有效, 文本列表, 错误信息)
+        """
+        if not file_content or not file_content.strip():
+            return False, [], "文件内容为空"
+        
+        lines = file_content.split(delimiter)
+        texts = [line.strip() for line in lines if line.strip()]
+        
+        if not texts:
+            return False, [], "未找到有效的翻译内容"
+        
+        return self.validate_batch_input(texts)
+    
+    def format_text_for_api(self, text: str) -> str:
+        """
+        格式化文本用于API调用
+        
+        Args:
+            text: 原始文本
+            
+        Returns:
+            格式化后的文本
+        """
+        text = text.strip()
+        
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        text = re.sub(r' {2,}', ' ', text)
+        
+        return text
+    
+    def truncate_text(self, text: str, max_length: int = None) -> Tuple[str, bool]:
+        """
+        截断文本
+        
+        Args:
+            text: 原始文本
+            max_length: 最大长度
+            
+        Returns:
+            (截断后的文本, 是否被截断)
+        """
+        max_length = max_length or self._max_length
+        
+        if len(text) <= max_length:
+            return text, False
+        
+        return text[:max_length], True
+    
+    def count_words(self, text: str) -> int:
+        """
+        统计单词数（英文）或字符数（中文）
+        
+        Args:
+            text: 文本
+            
+        Returns:
+            单词数或字符数
+        """
+        text = text.strip()
+        
+        if self.is_chinese(text):
+            chinese_pattern = re.compile(r'[\u4e00-\u9fff]')
+            return len(chinese_pattern.findall(text))
+        else:
+            words = text.split()
+            return len(words)
     
     def validate_menu_choice(self, choice: str, 
                              valid_range: range) -> Tuple[bool, Optional[int], str]:
@@ -181,255 +337,130 @@ class InputValidator:
         
         choice = choice.strip()
         
-        is_valid, num, error = self.validate_integer(choice)
-        
-        if not is_valid:
+        try:
+            num = int(choice)
+        except ValueError:
             return False, None, f"请输入有效的数字选项"
         
         if num not in valid_range:
             return False, None, f"选项 {num} 不在有效范围内 ({valid_range.start}-{valid_range.stop - 1})"
         
         return True, num, ""
-    
-    def parse_expression(self, expression: str) -> Tuple[bool, List[str], str]:
-        """
-        解析数学表达式
-        
-        Args:
-            expression: 数学表达式字符串
-            
-        Returns:
-            (是否有效, 解析后的token列表, 错误信息)
-        """
-        if expression is None or expression.strip() == '':
-            return False, [], "表达式不能为空"
-        
-        expression = expression.strip()
-        
-        tokens = []
-        current_token = ''
-        
-        for char in expression:
-            if char in '+-*/^%()':
-                if current_token:
-                    tokens.append(current_token)
-                    current_token = ''
-                tokens.append(char)
-            elif char.isspace():
-                if current_token:
-                    tokens.append(current_token)
-                    current_token = ''
-            else:
-                current_token += char
-        
-        if current_token:
-            tokens.append(current_token)
-        
-        for token in tokens:
-            if token not in '+-*/^%()':
-                is_valid, _, _ = self.validate_number(token)
-                if not is_valid and token.lower() not in self.VALID_OPERATORS:
-                    return False, [], f"无效的token: '{token}'"
-        
-        return True, tokens, ""
-    
-    def format_input(self, value: str) -> str:
-        """
-        格式化用户输入
-        
-        Args:
-            value: 原始输入
-            
-        Returns:
-            格式化后的字符串
-        """
-        if value is None:
-            return ''
-        
-        value = value.strip()
-        
-        if self._decimal_separator != '.':
-            value = value.replace(self._decimal_separator, '.')
-        
-        value = re.sub(r'\s+', ' ', value)
-        
-        return value
-    
-    def sanitize_input(self, value: str) -> str:
-        """
-        清理输入中的危险字符
-        
-        Args:
-            value: 原始输入
-            
-        Returns:
-            清理后的字符串
-        """
-        if value is None:
-            return ''
-        
-        dangerous_chars = ['<', '>', '"', "'", '&', ';', '`', '|']
-        result = value
-        
-        for char in dangerous_chars:
-            result = result.replace(char, '')
-        
-        return result
-    
-    def validate_angle_input(self, value: str, 
-                             mode: str = 'degree') -> Tuple[bool, Optional[float], str]:
-        """
-        验证角度输入
-        
-        Args:
-            value: 用户输入的角度值
-            mode: 角度模式 ('degree' 或 'radian')
-            
-        Returns:
-            (是否有效, 角度值, 错误信息)
-        """
-        is_valid, num, error = self.validate_number(value)
-        
-        if not is_valid:
-            return False, None, error
-        
-        if mode == 'degree':
-            pass
-        
-        return True, num, ""
-    
-    def validate_base_input(self, value: str) -> Tuple[bool, Optional[float], str]:
-        """
-        验证对数底数输入
-        
-        Args:
-            value: 用户输入的底数
-            
-        Returns:
-            (是否有效, 底数值, 错误信息)
-        """
-        is_valid, num, error = self.validate_number(value)
-        
-        if not is_valid:
-            return False, None, error
-        
-        if num <= 0:
-            return False, None, f"对数底数必须大于0，当前: {num}"
-        
-        if num == 1:
-            return False, None, "对数底数不能为1"
-        
-        return True, num, ""
-    
-    def validate_power_exponent(self, value: str, 
-                                 base: float) -> Tuple[bool, Optional[float], str]:
-        """
-        验证幂运算指数
-        
-        Args:
-            value: 用户输入的指数
-            base: 底数
-            
-        Returns:
-            (是否有效, 指数值, 错误信息)
-        """
-        is_valid, num, error = self.validate_number(value)
-        
-        if not is_valid:
-            return False, None, error
-        
-        if base < 0 and not float(num).is_integer():
-            return False, None, f"负数的非整数次幂无实数结果: {base}^{num}"
-        
-        return True, num, ""
-    
-    def validate_root_index(self, value: str, 
-                            radicand: float) -> Tuple[bool, Optional[int], str]:
-        """
-        验证根指数
-        
-        Args:
-            value: 用户输入的根指数
-            radicand: 被开方数
-            
-        Returns:
-            (是否有效, 根指数, 错误信息)
-        """
-        is_valid, num, error = self.validate_integer(value, min_val=1)
-        
-        if not is_valid:
-            return False, None, error
-        
-        if radicand < 0 and num % 2 == 0:
-            return False, None, f"负数不能开偶次方根: {radicand}的{num}次方根"
-        
-        return True, num, ""
 
 
-class LegacyInputParser:
+class SimpleInputParser:
     """
-    兼容模式输入解析器
+    极简模式输入解析器
     
-    用于解析旧版本计算器的输入格式。
+    用于解析极简模式的输入格式。
     """
     
     def __init__(self):
-        """初始化兼容模式解析器"""
+        """初始化极简模式解析器"""
         self._validator = InputValidator()
     
-    def parse_legacy_format(self, expression: str) -> Tuple[bool, dict, str]:
+    def parse(self, user_input: str) -> Tuple[bool, dict, str]:
         """
-        解析旧版本格式表达式
+        解析用户输入
         
-        旧版本格式: "数字1 运算符 数字2" 或 "运算符 数字"
+        支持格式：
+        - 直接输入文本（自动检测语言）
+        - "en:hello" 或 "zh:你好"（指定目标语言）
+        - "en>zh:hello"（指定源语言和目标语言）
         
         Args:
-            expression: 表达式字符串
+            user_input: 用户输入
             
         Returns:
             (是否有效, 解析结果字典, 错误信息)
         """
-        if expression is None or expression.strip() == '':
-            return False, {}, "表达式不能为空"
+        if not user_input or not user_input.strip():
+            return False, {}, "输入不能为空"
         
-        expression = expression.strip()
-        parts = expression.split()
+        user_input = user_input.strip()
         
-        if len(parts) == 2:
-            op, num_str = parts
-            is_valid, num, error = self._validator.validate_number(num_str)
-            if not is_valid:
-                return False, {}, error
-            return True, {'operator': op.lower(), 'operand': num}, ""
+        if ':' in user_input:
+            return self._parse_with_colon(user_input)
         
-        elif len(parts) == 3:
-            num1_str, op, num2_str = parts
-            is_valid1, num1, error1 = self._validator.validate_number(num1_str)
-            is_valid2, num2, error2 = self._validator.validate_number(num2_str)
+        return self._parse_simple(user_input)
+    
+    def _parse_simple(self, text: str) -> Tuple[bool, dict, str]:
+        """
+        解析简单格式（纯文本）
+        
+        Args:
+            text: 文本
             
-            if not is_valid1:
-                return False, {}, error1
-            if not is_valid2:
-                return False, {}, error2
-            
-            return True, {
-                'operator': op.lower(),
-                'operand1': num1,
-                'operand2': num2
-            }, ""
+        Returns:
+            解析结果
+        """
+        is_valid, processed_text, error = self._validator.validate_text(text)
         
-        else:
-            return False, {}, f"无法解析表达式: '{expression}'，请使用格式: '数字1 运算符 数字2' 或 '运算符 数字'"
+        if not is_valid:
+            return False, {}, error
+        
+        target_lang = self._validator.suggest_target_lang(processed_text)
+        
+        return True, {
+            'text': processed_text,
+            'source_lang': 'auto',
+            'target_lang': target_lang
+        }, ""
+    
+    def _parse_with_colon(self, user_input: str) -> Tuple[bool, dict, str]:
+        """
+        解析带冒号的格式
+        
+        Args:
+            user_input: 用户输入
+            
+        Returns:
+            解析结果
+        """
+        parts = user_input.split(':', 1)
+        
+        if len(parts) != 2:
+            return False, {}, "格式错误，请使用 '目标语言:文本' 或 '源语言>目标语言:文本'"
+        
+        lang_part = parts[0].strip()
+        text = parts[1].strip()
+        
+        is_valid, processed_text, error = self._validator.validate_text(text)
+        if not is_valid:
+            return False, {}, error
+        
+        if '>' in lang_part:
+            lang_parts = lang_part.split('>')
+            if len(lang_parts) == 2:
+                source_lang = lang_parts[0].strip()
+                target_lang = lang_parts[1].strip()
+                
+                _, source_code, _ = self._validator.validate_language(source_lang)
+                _, target_code, _ = self._validator.validate_language(target_lang)
+                
+                return True, {
+                    'text': processed_text,
+                    'source_lang': source_code,
+                    'target_lang': target_code
+                }, ""
+        
+        _, target_code, _ = self._validator.validate_language(lang_part)
+        
+        return True, {
+            'text': processed_text,
+            'source_lang': 'auto',
+            'target_lang': target_code or 'zh'
+        }, ""
 
 
-def create_validator(decimal_separator: str = '.') -> InputValidator:
+def create_validator(max_length: int = 5000) -> InputValidator:
     """
     工厂函数：创建输入校验器实例
     
     Args:
-        decimal_separator: 小数分隔符
+        max_length: 最大文本长度
         
     Returns:
         InputValidator 实例
     """
-    return InputValidator(decimal_separator=decimal_separator)
+    return InputValidator(max_length=max_length)
